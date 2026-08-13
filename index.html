@@ -491,6 +491,12 @@ async function downloadICS(){
   const utc = d => `${d.getUTCFullYear()}${z(d.getUTCMonth()+1)}${z(d.getUTCDate())}T`
                  + `${z(d.getUTCHours())}${z(d.getUTCMinutes())}${z(d.getUTCSeconds())}Z`;
 
+  /* 通知（カレンダー）から1タップでアプリに戻れるよう、イベントにURLを入れる。
+     配信先が変わっても追随するよう location から取る。 */
+  const appURL = location.origin + location.pathname;
+  const esc = s => String(s).replace(/\\/g,'\\\\').replace(/;/g,'\\;')
+                            .replace(/,/g,'\\,').replace(/\n/g,'\\n');
+
   let ics = ['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//PVT-B//JP','CALSCALE:GREGORIAN'];
   for(const it of items){
     const end = new Date(it.at.getTime()+5*60000);
@@ -500,6 +506,8 @@ async function downloadICS(){
       `DTSTART:${utc(it.at)}`,
       `DTEND:${utc(end)}`,
       `SUMMARY:PVT ${it.label}`,
+      `DESCRIPTION:${esc(appURL)}`,             // 予定の本文がタップ可能なリンクになる
+      `URL:${esc(appURL)}`,
       'BEGIN:VALARM','ACTION:DISPLAY',`DESCRIPTION:PVT ${it.label}`,
       'TRIGGER:PT0M',                           // 開始時刻ちょうど（事前通知にしない）
       'END:VALARM','END:VEVENT');
