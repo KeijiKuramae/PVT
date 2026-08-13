@@ -67,6 +67,9 @@
   <h1>PVT-B</h1>
   <p class="sub">3分版 精神運動覚醒課題</p>
   <div class="status" id="status"></div>
+  <div id="exportBox" style="display:none">
+    <button onclick="exportTodayManual()">📤 今日の分を書き出す（未実施）</button>
+  </div>
   <button class="primary" onclick="startFlow('b')">PVT を開始（3分）</button>
   <button onclick="startFlow('p10')">10分版（週1回）</button>
   <button onclick="show('events')">イベント打刻</button>
@@ -273,6 +276,7 @@ const PLAN = [
   {label:'wake+15', min:15},{label:'wake+30', min:30},
   {label:'wake+8h', min:480},{label:'wake+12h', min:720}
 ];
+const EXPORT_MIN = 840;   // 起床+14時間。この時刻以降にアプリを開くと当日分を自動書き出し
 function nextPlanned(wakeDate, doneLabels){
   const cand = [];
   for(const p of PLAN){
@@ -469,6 +473,7 @@ async function saveNote(){
   const m = await get('sessions', sess.session_id);
   m.note = v; await put('sessions', m);
   show('home');
+  await exportPendingCheck();
 }
 
 /* =============== .ics 生成 ===============
@@ -485,6 +490,8 @@ async function downloadICS(){
   }
   const noon = new Date(); noon.setHours(12,0,0,0);
   if(noon > new Date()) items.push({label:'noon', at:noon});
+  /* 当日分の書き出しを促す予定。通知でアプリを開かせ、開いた時点で自動書き出しが走る */
+  items.push({label:'export', at:new Date(wake.getTime()+EXPORT_MIN*60000)});
   items.sort((a,b)=>a.at-b.at);
 
   const z = n => String(n).padStart(2,'0');
@@ -505,11 +512,11 @@ async function downloadICS(){
       `DTSTAMP:${utc(new Date())}`,
       `DTSTART:${utc(it.at)}`,
       `DTEND:${utc(end)}`,
-      `SUMMARY:PVT ${it.label}`,
+      `SUMMARY:${it.label==='export' ? '📤 PVT 今日の分を書き出す' : 'PVT '+it.label}`,
       `DESCRIPTION:${esc(appURL)}`,             // 予定の本文がタップ可能なリンクになる
       `URL:${esc(appURL)}`,
       'BEGIN:VALARM','ACTION:DISPLAY',`DESCRIPTION:PVT ${it.label}`,
-      'TRIGGER:PT0M',                           // 開始時刻ちょうど（事前通知にしない）
+      'TRIGGER;RELATED=START:-PT0M',             // 開始時刻ちょうど（事前通知にしない）
       'END:VALARM','END:VEVENT');
   }
   ics.push('END:VCALENDAR');
@@ -574,8 +581,53 @@ async function refreshData(){
   + `<span class="k">イベント</span> ${e.length}`;
 }
 
+/* =============== 日次の自動書き出し ===============
+   閉じている間にコードは動かせないため、「起床+14時間以降に開いたら書き出す」方式。
+   カレンダーに export の予定を入れてあるので、通知→起動→自動書き出し で完結する。
+   Android Chrome はダウンロードを確認なしで Download フォルダに保存する。 */
+
+async function dayRows(day){
+  const inDay = ts => studyDay(new Date(ts)) === day;
+  const sessions = (await all('sessions')).filter(s=>inDay(s.started_at));
+  const ids = new Set(sessions.map(s=>s.session_id));
+  const trials = (await all('trials')).filter(t=>ids.has(t.session_id));
+  const events = (await all('events')).filter(e=>inDay(e.event_ts));
+  return {day, sessions, trials, events};
+}
+
+/* 当日分をまとめた1ファイル。3表を含むので JSON にする（CSVは解析時に全期間で出す） */
+async function exportDay(day, silent){
+  const d = await dayRows(day);
+  if(!d.sessions.length && !d.events.length){ if(!silent) alert('その日のデータがありません'); return false; }
+  d.exported_at = iso(new Date());
+  dl(new Blob([JSON.stringify(d)],{type:'application/json'}), `pvt-${day}.json`);
+  await put('meta',{k:'exported_'+day, v:iso(new Date())});
+  return true;
+}
+
+async function exportPendingCheck(){
+  const day = studyDay(new Date());
+  const already = await get('meta','exported_'+day);
+  const tau = await tauNow();
+  const due = tau !== null && tau >= EXPORT_MIN;
+  const box = document.getElementById('exportBox');
+  if(due && !already){
+    box.style.display = 'block';
+    /* 自動で試みる。Chrome が無操作ダウンロードを抑止した場合はボタンが残る */
+    await exportDay(day, true);
+    const done = await get('meta','exported_'+day);
+    if(done) box.style.display = 'none';
+  }else{
+    box.style.display = 'none';
+  }
+}
+async function exportTodayManual(){
+  const day = studyDay(new Date());
+  if(await exportDay(day, false)) document.getElementById('exportBox').style.display='none';
+}
+
 /* =============== 起動 =============== */
-openDB().then(refreshHome);
+openDB().then(async()=>{ await refreshHome(); await exportPendingCheck(); });
 </script>
 </body>
 </html>
