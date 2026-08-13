@@ -70,6 +70,7 @@
   <div id="exportBox" style="display:none">
     <button onclick="exportTodayManual()">📤 今日の分を書き出す（未実施）</button>
   </div>
+  <button onclick="shareToday()">☁️ 今日の分を Drive に送る</button>
   <button class="primary" onclick="startFlow('b')">PVT を開始（3分）</button>
   <button onclick="startFlow('p10')">10分版（週1回）</button>
   <button onclick="show('events')">イベント打刻</button>
@@ -162,7 +163,12 @@
   <button onclick="exportCSV('events')">events.csv</button>
   <hr>
   <button onclick="exportJSON()">全データ（JSON バックアップ）</button>
-  <p class="note">CSVは書き出しても端末内のデータは消えません。週に一度は書き出してPCに退避してください。</p>
+  <button onclick="shareAll()">☁️ 全データを Drive に送る</button>
+  <p class="note">
+    書き出しても端末内のデータは消えません。<br>
+    <b>Drive への保存先</b>：共有シートで Drive を選び、<code>研究用 / pvt / 記録</code> を指定してください。PC側の同じフォルダに同期されます。<br>
+    <b>週に一度</b>は「全データを Drive に送る」を実行してください。日次の自動書き出しは端末内の控えです。
+  </p>
   <hr>
   <button class="ghost" onclick="show('home')">戻る</button>
 </div>
@@ -624,6 +630,33 @@ async function exportPendingCheck(){
 async function exportTodayManual(){
   const day = studyDay(new Date());
   if(await exportDay(day, false)) document.getElementById('exportBox').style.display='none';
+}
+
+/* =============== Drive へ送る（共有シート経由） ===============
+   スマホのダウンロードは端末内 Download にしか入らないため、PC側の
+   G:\...\pvt\記録 に届けるには共有シートで Drive アプリに渡す必要がある。
+   保存先は Drive 上の 研究用/pvt/記録 を選ぶ。 */
+async function shareFile(name, text){
+  const file = new File([text], name, {type:'application/json'});
+  if(navigator.canShare && navigator.canShare({files:[file]})){
+    try{ await navigator.share({files:[file], title:name}); return true; }
+    catch(e){ if(e.name==='AbortError') return false; }
+  }
+  dl(new Blob([text],{type:'application/json'}), name);   // 非対応端末は従来どおり
+  alert('共有に対応していない端末のため、Download に保存しました');
+  return true;
+}
+async function shareToday(){
+  const day = studyDay(new Date());
+  const d = await dayRows(day);
+  if(!d.sessions.length && !d.events.length){ alert('その日のデータがありません'); return; }
+  d.exported_at = iso(new Date());
+  await shareFile(`pvt-${day}.json`, JSON.stringify(d));
+}
+async function shareAll(){
+  const data = {trials:await all('trials'), sessions:await all('sessions'),
+                events:await all('events'), exported_at: iso(new Date())};
+  await shareFile('pvt-backup-'+dayKey(new Date())+'.json', JSON.stringify(data));
 }
 
 /* =============== 起動 =============== */
