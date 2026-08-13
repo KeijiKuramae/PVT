@@ -1,0 +1,573 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<title>PVT-B</title>
+<style>
+  :root{
+    --bg:#101216; --fg:#e8eaed; --dim:#9aa0a6; --line:#2a2e35;
+    --accent:#4c8dff; --warn:#ff5c5c; --ok:#3ecf8e;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent}
+  html,body{height:100%; margin:0}
+  body{
+    background:var(--bg); color:var(--fg);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Sans","Noto Sans JP",sans-serif;
+    display:flex; flex-direction:column;
+    padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+    overflow:hidden;
+  }
+  .screen{flex:1; display:none; flex-direction:column; padding:20px; overflow-y:auto}
+  .screen.on{display:flex}
+  h1{font-size:17px; margin:0 0 4px; font-weight:600}
+  .sub{color:var(--dim); font-size:13px; line-height:1.6; margin:0 0 18px}
+  button{
+    font:inherit; color:var(--fg); background:#1a1e25; border:1px solid var(--line);
+    border-radius:12px; padding:16px; width:100%; margin-bottom:10px; cursor:pointer;
+  }
+  button:active{background:#242a33}
+  button.primary{background:var(--accent); border-color:var(--accent); color:#fff; font-weight:600; font-size:17px; padding:20px}
+  button.ghost{background:transparent}
+  button.danger{color:var(--warn)}
+  .row{display:flex; gap:8px}
+  .row button{margin-bottom:8px}
+  .kss{display:grid; grid-template-columns:repeat(3,1fr); gap:8px}
+  .kss button{margin:0; padding:14px 6px; font-size:13px; line-height:1.35}
+  .kss b{display:block; font-size:22px; margin-bottom:3px}
+  .status{border:1px solid var(--line); border-radius:12px; padding:14px; margin-bottom:16px; font-size:13px; line-height:1.8}
+  .status .k{color:var(--dim)}
+  input,select,textarea{
+    font:inherit; width:100%; padding:14px; border-radius:12px;
+    border:1px solid var(--line); background:#1a1e25; color:var(--fg); margin-bottom:10px;
+  }
+  label.f{display:block; font-size:12px; color:var(--dim); margin-bottom:6px}
+
+  /* task */
+  #task{padding:0; align-items:stretch; justify-content:center; background:#000; touch-action:none}
+  #stage{flex:1; display:flex; align-items:center; justify-content:center; flex-direction:column; user-select:none}
+  #counter{font-variant-numeric:tabular-nums; font-size:16vw; font-weight:700; letter-spacing:1px; color:#ff3b30; opacity:0}
+  #counter.on{opacity:1}
+  #counter.done{color:var(--ok)}
+  #fs{position:absolute; font-size:20px; color:var(--warn); opacity:0; transition:opacity .1s}
+  #fs.on{opacity:1}
+  #dot{width:14px;height:14px;border-radius:50%;background:#2a2e35;position:absolute;bottom:24px}
+
+  .note{font-size:12px; color:var(--dim); line-height:1.7; margin-top:8px}
+  .big{font-size:34px; font-weight:700; margin:6px 0 2px; font-variant-numeric:tabular-nums}
+  hr{border:0; border-top:1px solid var(--line); margin:18px 0}
+</style>
+</head>
+<body>
+
+<!-- ================= HOME ================= -->
+<div id="home" class="screen on">
+  <h1>PVT-B</h1>
+  <p class="sub">3分版 精神運動覚醒課題</p>
+  <div class="status" id="status"></div>
+  <button class="primary" onclick="startFlow('b')">PVT を開始（3分）</button>
+  <button onclick="startFlow('p10')">10分版（週1回）</button>
+  <button onclick="show('events')">イベント打刻</button>
+  <button class="ghost" onclick="show('data')">データ</button>
+</div>
+
+<!-- ================= KSS ================= -->
+<div id="kss" class="screen">
+  <h1>いまの眠気は？</h1>
+  <p class="sub">KSS（1＝非常にはっきり覚醒 … 9＝非常に眠い）</p>
+  <div class="kss" id="kssGrid"></div>
+  <hr>
+  <button class="ghost" onclick="show('home')">戻る</button>
+</div>
+
+<!-- ================= WAKE TIME ================= -->
+<div id="wake" class="screen">
+  <h1>今朝は何時に起きましたか</h1>
+  <p class="sub">この時刻が、以降のセッション（+15分／+30分／+8h／+12h）の起点になります。ウェアラブルの推定値ではなく、自分の感覚で構いません。</p>
+  <label class="f">起床時刻</label>
+  <input type="time" id="wakeInput">
+  <button class="primary" onclick="confirmWake()">確定して開始</button>
+  <button class="ghost" onclick="show('home')">戻る</button>
+</div>
+
+<!-- ================= READY ================= -->
+<div id="ready" class="screen">
+  <h1 id="readyLabel"></h1>
+  <p class="sub">
+    赤い数字が出たら、できるだけ速く画面をタップしてください。<br>
+    数字が出る前に押すとフライングとして記録されます。<br>
+    3分で自動的に終わります。
+  </p>
+  <button class="primary" onclick="beginTask()">タップして開始</button>
+  <button class="ghost" onclick="show('home')">戻る</button>
+</div>
+
+<!-- ================= TASK ================= -->
+<div id="task" class="screen">
+  <div id="stage">
+    <div id="counter">0</div>
+    <div id="fs">FALSE START</div>
+    <div id="dot"></div>
+  </div>
+</div>
+
+<!-- ================= DONE ================= -->
+<div id="done" class="screen">
+  <h1>終了</h1>
+  <p class="sub" id="doneMeta"></p>
+  <label class="f">メモ（任意・欠測した回の理由もここに）</label>
+  <textarea id="noteInput" rows="3"></textarea>
+  <button class="primary" onclick="saveNote()">保存</button>
+  <div id="icsBox" style="display:none">
+    <hr>
+    <p class="sub"><b>今日の残りの予定をカレンダーに入れてください。</b><br>各予定の開始時刻ちょうどにアラームが鳴ります。</p>
+    <button onclick="downloadICS()">カレンダーに追加（.ics）</button>
+  </div>
+</div>
+
+<!-- ================= EVENTS ================= -->
+<div id="events" class="screen">
+  <h1>イベント打刻</h1>
+  <p class="sub">押した瞬間の時刻が記録されます。</p>
+  <div class="row">
+    <button onclick="ev('caffeine',1)">☕ カフェイン 1杯</button>
+    <button onclick="ev('caffeine',2)">☕☕ 2杯</button>
+  </div>
+  <div class="row">
+    <button onclick="ev('nap_start')">仮眠 開始</button>
+    <button onclick="ev('nap_end')">仮眠 終了</button>
+  </div>
+  <div class="row">
+    <button onclick="ev('meal')">食事</button>
+    <button onclick="ev('light_exposure')">強い光</button>
+  </div>
+  <button onclick="ev('other')">その他</button>
+  <hr>
+  <div class="status" id="evLog"></div>
+  <button class="danger" onclick="undoEvent()">直前の1件を取り消す</button>
+  <button class="ghost" onclick="show('home')">戻る</button>
+</div>
+
+<!-- ================= DATA ================= -->
+<div id="data" class="screen">
+  <h1>データ</h1>
+  <div class="status" id="dataStat"></div>
+  <button onclick="exportCSV('trials')">trials.csv</button>
+  <button onclick="exportCSV('sessions')">sessions.csv</button>
+  <button onclick="exportCSV('events')">events.csv</button>
+  <hr>
+  <button onclick="exportJSON()">全データ（JSON バックアップ）</button>
+  <p class="note">CSVは書き出しても端末内のデータは消えません。週に一度は書き出してPCに退避してください。</p>
+  <hr>
+  <button class="ghost" onclick="show('home')">戻る</button>
+</div>
+
+<script>
+/* =========================================================================
+   PVT-B  —  要件定義 PVT_要件定義.md に対応する実装
+   - 時間計測は performance.now()（Date.now() はシステム時計補正で飛ぶ）
+   - 刺激提示時刻は requestAnimationFrame の実描画フレーム時刻
+   - ラプス判定はここでは行わない（閾値は解析時に可変）
+   ========================================================================= */
+
+/* 課題の版。3分版(PVT-B)が日課、10分版は週1回だけ機器間変換の較正に使う */
+const MODE = {
+  b:   {ms:180000, isiMin:1000, isiMax: 4000, name:'3分版'},
+  p10: {ms:600000, isiMin:2000, isiMax:10000, name:'10分版'}
+};
+let mode = MODE.b;
+const FEEDBACK_MS = 900;        // 反応後にRTを見せる時間
+
+/* --- 壁時計とperformance.now()の対応（1回だけ取る） --- */
+const T0_WALL = Date.now(), T0_PERF = performance.now();
+const wall = p => new Date(T0_WALL + (p - T0_PERF));
+const iso  = d => {
+  const z = n => String(n).padStart(2,'0');
+  const off = -d.getTimezoneOffset(), s = off>=0?'+':'-', a = Math.abs(off);
+  return `${d.getFullYear()}-${z(d.getMonth()+1)}-${z(d.getDate())}T`
+       + `${z(d.getHours())}:${z(d.getMinutes())}:${z(d.getSeconds())}.${String(d.getMilliseconds()).padStart(3,'0')}`
+       + `${s}${z(Math.floor(a/60))}:${z(a%60)}`;
+};
+
+/* =============== ストレージ（IndexedDB） =============== */
+let db;
+function openDB(){
+  return new Promise((res,rej)=>{
+    const r = indexedDB.open('pvtb',1);
+    r.onupgradeneeded = e => {
+      const d = e.target.result;
+      d.createObjectStore('trials',{keyPath:'id',autoIncrement:true});
+      d.createObjectStore('sessions',{keyPath:'session_id'});
+      d.createObjectStore('events',{keyPath:'id',autoIncrement:true});
+      d.createObjectStore('meta',{keyPath:'k'});
+    };
+    r.onsuccess = e => { db = e.target.result; res(); };
+    r.onerror = rej;
+  });
+}
+const tx = (store,mode='readonly') => db.transaction(store,mode).objectStore(store);
+const put = (store,val) => new Promise((res,rej)=>{ const q=tx(store,'readwrite').put(val); q.onsuccess=()=>res(q.result); q.onerror=rej; });
+const all = store => new Promise((res,rej)=>{ const q=tx(store).getAll(); q.onsuccess=()=>res(q.result); q.onerror=rej; });
+const get = (store,k) => new Promise((res,rej)=>{ const q=tx(store).get(k); q.onsuccess=()=>res(q.result); q.onerror=rej; });
+const del = (store,k) => new Promise((res,rej)=>{ const q=tx(store,'readwrite').delete(k); q.onsuccess=()=>res(); q.onerror=rej; });
+
+/* =============== 画面遷移 =============== */
+function show(id){
+  document.querySelectorAll('.screen').forEach(s=>s.classList.remove('on'));
+  document.getElementById(id).classList.add('on');
+  if(id==='home') refreshHome();
+  if(id==='events') refreshEvents();
+  if(id==='data') refreshData();
+}
+
+/* =============== ラベル判定 ===============
+   仕様: 未実施の予定ラベルを繰り上げない。実測 tau_min から機械的に決める。
+   境界値はより早いラベルに寄せる。 */
+function assignLabel(tauMin, when){
+  if(tauMin !== null){
+    if(tauMin <=  10) return 'wake+0';
+    if(tauMin <=  22) return 'wake+15';
+    if(tauMin <=  45) return 'wake+30';
+    if(tauMin >= 420 && tauMin <= 540) return 'wake+8h';
+    if(tauMin >= 660 && tauMin <= 780) return 'wake+12h';
+  }
+  const m = when.getHours()*60 + when.getMinutes();
+  if(m >= 11*60+30 && m <= 12*60+30) return 'noon';
+  return 'off_schedule';
+}
+
+/* =============== 今日の起床時刻 =============== */
+const dayKey = d => { const z=n=>String(n).padStart(2,'0');
+  return `${d.getFullYear()}${z(d.getMonth()+1)}${z(d.getDate())}`; };
+/* 午前4時を日付の境界にする（深夜の打刻を前日に寄せる） */
+function studyDay(d){ const x=new Date(d); if(x.getHours()<4) x.setDate(x.getDate()-1); return dayKey(x); }
+
+async function getWake(){ const r = await get('meta','wake_'+studyDay(new Date())); return r ? r.v : null; }
+async function setWake(isoStr){ await put('meta',{k:'wake_'+studyDay(new Date()), v:isoStr}); }
+
+async function tauNow(){
+  const w = await getWake(); if(!w) return null;
+  return Math.round((Date.now() - new Date(w).getTime())/60000);
+}
+
+/* =============== ホーム =============== */
+async function refreshHome(){
+  const w = await getWake();
+  const tau = await tauNow();
+  const sessions = await all('sessions');
+  const today = sessions.filter(s=>studyDay(new Date(s.started_at))===studyDay(new Date()));
+  const doneLabels = today.map(s=>s.label).join(' / ') || 'まだなし';
+  const next = w ? nextPlanned(new Date(w), today.map(s=>s.label)) : null;
+  document.getElementById('status').innerHTML =
+    `<span class="k">起床打刻</span> ${w ? new Date(w).toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit'}) : '未'}<br>`
+  + `<span class="k">起床からの経過</span> ${tau===null?'—':tau+' 分'}<br>`
+  + `<span class="k">いま開始すると</span> <b>${assignLabel(tau,new Date())}</b><br>`
+  + `<span class="k">今日の実施</span> ${doneLabels}<br>`
+  + `<span class="k">次の予定</span> ${next ? next.label+' — '+next.at.toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit'}) : '—'}<br>`
+  + `<span class="k">累計セッション</span> ${sessions.length}`;
+}
+
+const PLAN = [
+  {label:'wake+15', min:15},{label:'wake+30', min:30},
+  {label:'wake+8h', min:480},{label:'wake+12h', min:720}
+];
+function nextPlanned(wakeDate, doneLabels){
+  const cand = [];
+  for(const p of PLAN){
+    if(doneLabels.includes(p.label)) continue;
+    cand.push({label:p.label, at:new Date(wakeDate.getTime()+p.min*60000)});
+  }
+  if(!doneLabels.includes('noon')){
+    const n = new Date(); n.setHours(12,0,0,0);
+    cand.push({label:'noon', at:n});
+  }
+  const future = cand.filter(c=>c.at>new Date()).sort((a,b)=>a.at-b.at);
+  return future[0] || null;
+}
+
+/* =============== 開始フロー =============== */
+let pending = {};
+async function startFlow(m){
+  mode = MODE[m] || MODE.b;
+  const w = await getWake();
+  const tau = await tauNow();
+  /* 10分版は較正用なので、時刻に関係なく label を pvt10 に固定する */
+  const label = (m === 'p10') ? 'pvt10' : assignLabel(tau, new Date());
+  pending = {label, tau};
+  if(!w){ // 起床打刻がまだ → 先に聞く
+    const n = new Date();
+    document.getElementById('wakeInput').value =
+      String(n.getHours()).padStart(2,'0')+':'+String(n.getMinutes()).padStart(2,'0');
+    show('wake'); return;
+  }
+  askKSS();
+}
+async function confirmWake(){
+  const v = document.getElementById('wakeInput').value;
+  if(!v) return;
+  const [h,m] = v.split(':').map(Number);
+  const d = new Date(); d.setHours(h,m,0,0);
+  if(d > new Date()) d.setDate(d.getDate()-1);  // 未来ならば前日
+  await setWake(iso(d));
+  pending.tau = Math.round((Date.now()-d.getTime())/60000);
+  if(pending.label !== 'pvt10') pending.label = assignLabel(pending.tau, new Date());
+  askKSS();
+}
+
+function askKSS(){
+  const g = document.getElementById('kssGrid');
+  const txt = ['非常にはっきり','かなりはっきり','はっきり','ふつう','どちらでもない',
+               'ややぼんやり','眠い','かなり眠い','非常に眠い'];
+  g.innerHTML = txt.map((t,i)=>`<button onclick="pickKSS(${i+1})"><b>${i+1}</b>${t}</button>`).join('');
+  show('kss');
+}
+function pickKSS(v){
+  pending.kss = v;
+  document.getElementById('readyLabel').textContent =
+    mode.name + '　' + pending.label
+    + '　（起床から ' + (pending.tau===null ? '—' : pending.tau + '分') + '）';
+  show('ready');
+}
+
+/* =============== 課題本体 =============== */
+let sess = null, wakeLock = null;
+
+async function beginTask(){
+  show('task');
+  try{ wakeLock = await navigator.wakeLock.request('screen'); }catch(e){ /* 非対応端末は無視 */ }
+  const startPerf = performance.now();
+  sess = {
+    session_id: 's'+Date.now(),
+    started_at: iso(wall(startPerf)),
+    label: pending.label,
+    tau_min: pending.tau,
+    subjective_kss: pending.kss,
+    wake_time_self_report: await getWake(),
+    note: '',
+    trials: []
+  };
+  runLoop(startPerf);
+}
+
+const counterEl = document.getElementById('counter');
+const fsEl = document.getElementById('fs');
+const dotEl = document.getElementById('dot');
+
+function waitTap(){
+  return new Promise(res=>{
+    const h = e => { e.preventDefault(); document.getElementById('task').removeEventListener('pointerdown',h);
+                     res(performance.now()); };
+    document.getElementById('task').addEventListener('pointerdown',h,{passive:false});
+  });
+}
+
+async function runLoop(startPerf){
+  let trial = 0;
+  let lastResp = startPerf;           // 直前の応答時刻（初回はセッション開始）
+
+  while(performance.now() - startPerf < mode.ms){
+    const isiTarget = mode.isiMin + Math.random()*(mode.isiMax - mode.isiMin);
+    const stimDue = lastResp + isiTarget;
+
+    // --- ISI 待ち。この間のタップは false start ---
+    let fs = false, fsAt = 0;
+    const onFS = e => { e.preventDefault(); if(!fs){ fs = true; fsAt = performance.now(); } };
+    document.getElementById('task').addEventListener('pointerdown',onFS,{passive:false});
+    while(performance.now() < stimDue && !fs){ await frame(); }
+    document.getElementById('task').removeEventListener('pointerdown',onFS);
+
+    if(fs){
+      trial++;
+      sess.trials.push({
+        trial, isi_ms: Math.round(isiTarget), isi_actual_ms: '',
+        rt_ms: '', false_start: 1,
+        stim_ts: '', resp_ts: iso(wall(fsAt))
+      });
+      fsEl.classList.add('on'); dotEl.style.background = '#ff5c5c';
+      await sleep(600);
+      fsEl.classList.remove('on'); dotEl.style.background = '#2a2e35';
+      lastResp = performance.now();
+      continue;                        // 新しいISIを引き直す
+    }
+
+    // --- 刺激提示（実描画フレームの時刻を採る） ---
+    const stimOnset = await paintStimulus();
+    const isiActual = stimOnset - lastResp;
+
+    // --- 応答待ち ---
+    const respAt = await waitTapWhileCounting(stimOnset);
+    const rt = respAt - stimOnset;
+
+    trial++;
+    sess.trials.push({
+      trial, isi_ms: Math.round(isiTarget), isi_actual_ms: Math.round(isiActual),
+      rt_ms: Math.round(rt), false_start: 0,
+      stim_ts: iso(wall(stimOnset)), resp_ts: iso(wall(respAt))
+    });
+
+    counterEl.textContent = Math.round(rt);
+    counterEl.classList.add('done');
+    await sleep(FEEDBACK_MS);
+    counterEl.classList.remove('on','done');
+    lastResp = performance.now();
+  }
+  await finishTask();
+}
+
+const frame = () => new Promise(r=>requestAnimationFrame(r));
+const sleep = ms => new Promise(r=>setTimeout(r,ms));
+
+/* 刺激を可視化し、実際に描画されたフレームの時刻を返す */
+function paintStimulus(){
+  return new Promise(res=>{
+    counterEl.textContent = '0';
+    counterEl.classList.add('on');
+    requestAnimationFrame(ts => res(ts));   // このフレームで画面に出る
+  });
+}
+
+/* カウンタを回しながら応答を待つ */
+function waitTapWhileCounting(onset){
+  return new Promise(res=>{
+    let done = false;
+    const el = document.getElementById('task');
+    const h = e => { e.preventDefault(); if(done) return; done = true;
+                     el.removeEventListener('pointerdown',h); res(performance.now()); };
+    el.addEventListener('pointerdown',h,{passive:false});
+    const tick = ts => {
+      if(done) return;
+      counterEl.textContent = Math.round(ts - onset);
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  });
+}
+
+async function finishTask(){
+  counterEl.classList.remove('on','done');
+  try{ if(wakeLock){ await wakeLock.release(); wakeLock = null; } }catch(e){}
+
+  for(const t of sess.trials) await put('trials', Object.assign({session_id: sess.session_id}, t));
+  const meta = Object.assign({}, sess); delete meta.trials;
+  await put('sessions', meta);
+
+  const valid = sess.trials.filter(t=>!t.false_start);
+  const fsN = sess.trials.length - valid.length;
+  const mean = valid.length ? Math.round(valid.reduce((a,t)=>a+t.rt_ms,0)/valid.length) : 0;
+  document.getElementById('doneMeta').innerHTML =
+    `<b>${sess.label}</b> ／ 起床から ${sess.tau_min===null?'—':sess.tau_min+'分'}<br>`
+  + `試行 ${sess.trials.length}（フライング ${fsN}）／ 平均RT ${mean} ms`;
+  document.getElementById('noteInput').value = '';
+  document.getElementById('icsBox').style.display = (sess.label==='wake+0') ? 'block' : 'none';
+  show('done');
+}
+
+async function saveNote(){
+  const v = document.getElementById('noteInput').value;
+  const m = await get('sessions', sess.session_id);
+  m.note = v; await put('sessions', m);
+  show('home');
+}
+
+/* =============== .ics 生成 ===============
+   Webには「N時間後にローカル通知を予約する」APIが無いため、
+   端末カレンダーに VALARM 付きで登録する。TRIGGER:PT0M＝開始時刻ちょうど。 */
+async function downloadICS(){
+  const w = await getWake(); if(!w) return;
+  const wake = new Date(w);
+  const day = studyDay(new Date());
+  const items = [];
+  for(const p of PLAN){
+    const at = new Date(wake.getTime()+p.min*60000);
+    if(at > new Date()) items.push({label:p.label, at});
+  }
+  const noon = new Date(); noon.setHours(12,0,0,0);
+  if(noon > new Date()) items.push({label:'noon', at:noon});
+  items.sort((a,b)=>a.at-b.at);
+
+  const z = n => String(n).padStart(2,'0');
+  const utc = d => `${d.getUTCFullYear()}${z(d.getUTCMonth()+1)}${z(d.getUTCDate())}T`
+                 + `${z(d.getUTCHours())}${z(d.getUTCMinutes())}${z(d.getUTCSeconds())}Z`;
+
+  let ics = ['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//PVT-B//JP','CALSCALE:GREGORIAN'];
+  for(const it of items){
+    const end = new Date(it.at.getTime()+5*60000);
+    ics.push('BEGIN:VEVENT',
+      `UID:pvt-${day}-${it.label}@local`,      // 決定的＝再取り込みで重複しない
+      `DTSTAMP:${utc(new Date())}`,
+      `DTSTART:${utc(it.at)}`,
+      `DTEND:${utc(end)}`,
+      `SUMMARY:PVT ${it.label}`,
+      'BEGIN:VALARM','ACTION:DISPLAY',`DESCRIPTION:PVT ${it.label}`,
+      'TRIGGER:PT0M',                           // 開始時刻ちょうど（事前通知にしない）
+      'END:VALARM','END:VEVENT');
+  }
+  ics.push('END:VCALENDAR');
+
+  const blob = new Blob([ics.join('\r\n')],{type:'text/calendar;charset=utf-8'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `pvt-${day}.ics`; a.click();
+  setTimeout(()=>{ URL.revokeObjectURL(url); }, 3000);
+}
+
+/* =============== イベント打刻 =============== */
+async function ev(type, value){
+  await put('events',{event_ts: iso(new Date()), event_type: type, value: value ?? ''});
+  refreshEvents();
+}
+async function undoEvent(){
+  const list = await all('events');
+  if(!list.length) return;
+  await del('events', list[list.length-1].id);
+  refreshEvents();
+}
+async function refreshEvents(){
+  const list = (await all('events')).slice(-6).reverse();
+  document.getElementById('evLog').innerHTML = list.length
+    ? list.map(e=>`<span class="k">${new Date(e.event_ts).toLocaleString('ja-JP',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})}</span> ${e.event_type}${e.value?' ×'+e.value:''}`).join('<br>')
+    : '<span class="k">まだ記録がありません</span>';
+}
+
+/* =============== 書き出し =============== */
+const COLS = {
+  trials:  ['session_id','trial','isi_ms','isi_actual_ms','rt_ms','false_start','stim_ts','resp_ts'],
+  sessions:['session_id','started_at','label','tau_min','subjective_kss','wake_time_self_report','note'],
+  events:  ['event_ts','event_type','value']
+};
+async function exportCSV(store){
+  const rows = await all(store);
+  const cols = COLS[store];
+  const esc = v => { v = (v===undefined||v===null)?'':String(v);
+                     return /[",\n]/.test(v) ? '"'+v.replace(/"/g,'""')+'"' : v; };
+  const csv = [cols.join(',')].concat(rows.map(r=>cols.map(c=>esc(r[c])).join(','))).join('\n');
+  dl(new Blob(['﻿'+csv],{type:'text/csv;charset=utf-8'}), store+'.csv');
+}
+async function exportJSON(){
+  const data = {trials:await all('trials'), sessions:await all('sessions'),
+                events:await all('events'), exported_at: iso(new Date())};
+  dl(new Blob([JSON.stringify(data)],{type:'application/json'}),
+     'pvt-backup-'+dayKey(new Date())+'.json');
+}
+function dl(blob,name){
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href=url; a.download=name; a.click();
+  setTimeout(()=>URL.revokeObjectURL(url),3000);
+}
+async function refreshData(){
+  const t = await all('trials'), s = await all('sessions'), e = await all('events');
+  const days = new Set(s.map(x=>studyDay(new Date(x.started_at)))).size;
+  document.getElementById('dataStat').innerHTML =
+    `<span class="k">計測日数</span> ${days} 日<br>`
+  + `<span class="k">セッション</span> ${s.length}<br>`
+  + `<span class="k">試行</span> ${t.length}<br>`
+  + `<span class="k">イベント</span> ${e.length}`;
+}
+
+/* =============== 起動 =============== */
+openDB().then(refreshHome);
+</script>
+</body>
+</html>
