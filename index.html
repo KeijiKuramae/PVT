@@ -72,7 +72,6 @@
   </div>
   <button onclick="shareToday()">☁️ 今日の分を Drive に送る</button>
   <button class="primary" onclick="startFlow('b')">PVT を開始（3分）</button>
-  <button onclick="startFlow('p10')">10分版（週1回）</button>
   <button onclick="show('events')">イベント打刻</button>
   <button class="ghost" onclick="show('data')">データ</button>
 </div>
@@ -124,10 +123,9 @@
   <label class="f">メモ（任意・欠測した回の理由もここに）</label>
   <textarea id="noteInput" rows="3"></textarea>
   <button class="primary" onclick="saveNote()">保存</button>
-  <div id="icsBox" style="display:none">
+  <div id="nextBox" style="display:none">
     <hr>
-    <p class="sub"><b>今日の残りの予定をカレンダーに入れてください。</b><br>各予定の開始時刻ちょうどにアラームが鳴ります。</p>
-    <button onclick="downloadICS()">カレンダーに追加（.ics）</button>
+    <p class="sub"><b id="nextTime"></b><br>端末のアラームをこの時刻に合わせてください。</p>
   </div>
 </div>
 
@@ -183,8 +181,7 @@
 
 /* 課題の版。3分版(PVT-B)が日課、10分版は週1回だけ機器間変換の較正に使う */
 const MODE = {
-  b:   {ms:180000, isiMin:1000, isiMax: 4000, name:'3分版'},
-  p10: {ms:600000, isiMin:2000, isiMax:10000, name:'10分版'}
+  b:   {ms:180000, isiMin:1000, isiMax: 4000, name:'3分版'}
 };
 let mode = MODE.b;
 const FEEDBACK_MS = 900;        // 反応後にRTを見せる時間
@@ -239,11 +236,7 @@ function assignLabel(tauMin, when){
     if(tauMin <=  10) return 'wake+0';
     if(tauMin <=  22) return 'wake+15';
     if(tauMin <=  45) return 'wake+30';
-    if(tauMin >= 420 && tauMin <= 540) return 'wake+8h';
-    if(tauMin >= 660 && tauMin <= 780) return 'wake+12h';
   }
-  const m = when.getHours()*60 + when.getMinutes();
-  if(m >= 11*60+30 && m <= 12*60+30) return 'noon';
   return 'off_schedule';
 }
 
@@ -279,8 +272,7 @@ async function refreshHome(){
 }
 
 const PLAN = [
-  {label:'wake+15', min:15},{label:'wake+30', min:30},
-  {label:'wake+8h', min:480},{label:'wake+12h', min:720}
+  {label:'wake+15', min:15},{label:'wake+30', min:30}
 ];
 const EXPORT_MIN = 840;   // 起床+14時間。この時刻以降にアプリを開くと当日分を自動書き出し
 function nextPlanned(wakeDate, doneLabels){
@@ -288,10 +280,6 @@ function nextPlanned(wakeDate, doneLabels){
   for(const p of PLAN){
     if(doneLabels.includes(p.label)) continue;
     cand.push({label:p.label, at:new Date(wakeDate.getTime()+p.min*60000)});
-  }
-  if(!doneLabels.includes('noon')){
-    const n = new Date(); n.setHours(12,0,0,0);
-    cand.push({label:'noon', at:n});
   }
   const future = cand.filter(c=>c.at>new Date()).sort((a,b)=>a.at-b.at);
   return future[0] || null;
@@ -303,8 +291,7 @@ async function startFlow(m){
   mode = MODE[m] || MODE.b;
   const w = await getWake();
   const tau = await tauNow();
-  /* 10分版は較正用なので、時刻に関係なく label を pvt10 に固定する */
-  const label = (m === 'p10') ? 'pvt10' : assignLabel(tau, new Date());
+  const label = assignLabel(tau, new Date());
   pending = {label, tau};
   if(!w){ // 起床打刻がまだ → 先に聞く
     const n = new Date();
@@ -322,7 +309,7 @@ async function confirmWake(){
   if(d > new Date()) d.setDate(d.getDate()-1);  // 未来ならば前日
   await setWake(iso(d));
   pending.tau = Math.round((Date.now()-d.getTime())/60000);
-  if(pending.label !== 'pvt10') pending.label = assignLabel(pending.tau, new Date());
+  pending.label = assignLabel(pending.tau, new Date());
   askKSS();
 }
 
@@ -470,7 +457,7 @@ async function finishTask(){
     `<b>${sess.label}</b> ／ 起床から ${sess.tau_min===null?'—':sess.tau_min+'分'}<br>`
   + `試行 ${sess.trials.length}（フライング ${fsN}）／ 平均RT ${mean} ms`;
   document.getElementById('noteInput').value = '';
-  document.getElementById('icsBox').style.display = (sess.label==='wake+0') ? 'block' : 'none';
+  await showNext();
   show('done');
 }
 
@@ -482,56 +469,22 @@ async function saveNote(){
   await exportPendingCheck();
 }
 
-/* =============== .ics 生成 ===============
-   Webには「N時間後にローカル通知を予約する」APIが無いため、
-   端末カレンダーに VALARM 付きで登録する。TRIGGER:PT0M＝開始時刻ちょうど。 */
-async function downloadICS(){
-  const w = await getWake(); if(!w) return;
-  const wake = new Date(w);
-  const day = studyDay(new Date());
-  const items = [];
-  for(const p of PLAN){
-    const at = new Date(wake.getTime()+p.min*60000);
-    if(at > new Date()) items.push({label:p.label, at});
-  }
-  const noon = new Date(); noon.setHours(12,0,0,0);
-  if(noon > new Date()) items.push({label:'noon', at:noon});
-  /* 当日分の書き出しを促す予定。通知でアプリを開かせ、開いた時点で自動書き出しが走る */
-  items.push({label:'export', at:new Date(wake.getTime()+EXPORT_MIN*60000)});
-  items.sort((a,b)=>a.at-b.at);
-
-  const z = n => String(n).padStart(2,'0');
-  const utc = d => `${d.getUTCFullYear()}${z(d.getUTCMonth()+1)}${z(d.getUTCDate())}T`
-                 + `${z(d.getUTCHours())}${z(d.getUTCMinutes())}${z(d.getUTCSeconds())}Z`;
-
-  /* 通知（カレンダー）から1タップでアプリに戻れるよう、イベントにURLを入れる。
-     配信先が変わっても追随するよう location から取る。 */
-  const appURL = location.origin + location.pathname;
-  const esc = s => String(s).replace(/\\/g,'\\\\').replace(/;/g,'\\;')
-                            .replace(/,/g,'\\,').replace(/\n/g,'\\n');
-
-  let ics = ['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//PVT-B//JP','CALSCALE:GREGORIAN'];
-  for(const it of items){
-    const end = new Date(it.at.getTime()+5*60000);
-    ics.push('BEGIN:VEVENT',
-      `UID:pvt-${day}-${it.label}@local`,      // 決定的＝再取り込みで重複しない
-      `DTSTAMP:${utc(new Date())}`,
-      `DTSTART:${utc(it.at)}`,
-      `DTEND:${utc(end)}`,
-      `SUMMARY:${it.label==='export' ? '📤 PVT 今日の分を書き出す' : 'PVT '+it.label}`,
-      `DESCRIPTION:${esc(appURL)}`,             // 予定の本文がタップ可能なリンクになる
-      `URL:${esc(appURL)}`,
-      'BEGIN:VALARM','ACTION:DISPLAY',`DESCRIPTION:PVT ${it.label}`,
-      'TRIGGER;RELATED=START:-PT0M',             // 開始時刻ちょうど（事前通知にしない）
-      'END:VALARM','END:VEVENT');
-  }
-  ics.push('END:VCALENDAR');
-
-  const blob = new Blob([ics.join('\r\n')],{type:'text/calendar;charset=utf-8'});
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url; a.download = `pvt-${day}.ics`; a.click();
-  setTimeout(()=>{ URL.revokeObjectURL(url); }, 3000);
+/* =============== 次のセッションの時刻 ===============
+   カレンダー連携（.ics）は 2026-08-22 に廃止した。予定が汚染されるため。
+   起床後30分以内に3回で終わるので、端末のアラーム1本で足りる。 */
+async function showNext(){
+  const box  = document.getElementById('nextBox');
+  const w = await getWake();
+  if(!w){ box.style.display='none'; return; }
+  const today = (await all('sessions'))
+    .filter(x=>studyDay(new Date(x.started_at))===studyDay(new Date()))
+    .map(x=>x.label);
+  const next = nextPlanned(new Date(w), today);
+  if(!next){ box.style.display='none'; return; }
+  document.getElementById('nextTime').textContent =
+    '次は ' + next.label + ' — '
+    + next.at.toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit'});
+  box.style.display='block';
 }
 
 /* =============== イベント打刻 =============== */
